@@ -194,9 +194,9 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (metaEl) {
             metaEl.innerHTML = `
-                <span>${date}</span> • 
-                <span>${calculateReadTime(blog.content)} min read</span> • 
-                <span>By ${blog.author || 'NextLakeLabs'}</span>
+                <span class="meta-item">${date}</span>
+                <span class="meta-item">${calculateReadTime(blog.content)} min read</span>
+                <span class="meta-item">By ${blog.author || 'NextLakeLabs'}</span>
             `;
         }
 
