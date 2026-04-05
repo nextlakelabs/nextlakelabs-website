@@ -9,9 +9,35 @@ document.addEventListener('DOMContentLoaded', function() {
     const navMenu = document.querySelector('.nav-menu');
     
     if (navToggle && navMenu) {
+        // Create backdrop overlay for mobile menu
+        const navOverlay = document.createElement('div');
+        navOverlay.className = 'nav-overlay';
+        navOverlay.style.cssText = `
+            position: fixed;
+            inset: 0;
+            top: 72px;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        `;
+        document.body.appendChild(navOverlay);
+
         navToggle.addEventListener('click', function() {
-            navMenu.classList.toggle('active');
+            const isActive = navMenu.classList.toggle('active');
             this.classList.toggle('active');
+            navOverlay.style.opacity = isActive ? '1' : '0';
+            navOverlay.style.visibility = isActive ? 'visible' : 'hidden';
+            document.body.style.overflow = isActive ? 'hidden' : '';
+        });
+
+        navOverlay.addEventListener('click', function() {
+            navMenu.classList.remove('active');
+            navToggle.classList.remove('active');
+            this.style.opacity = '0';
+            this.style.visibility = 'hidden';
+            document.body.style.overflow = '';
         });
         
         // Close menu when clicking a link
@@ -19,6 +45,9 @@ document.addEventListener('DOMContentLoaded', function() {
             link.addEventListener('click', () => {
                 navMenu.classList.remove('active');
                 navToggle.classList.remove('active');
+                navOverlay.style.opacity = '0';
+                navOverlay.style.visibility = 'hidden';
+                document.body.style.overflow = '';
             });
         });
     }
@@ -67,23 +96,95 @@ document.addEventListener('DOMContentLoaded', function() {
     const blogComingSoon = document.getElementById('blogComingSoon');
     const API_BASE_URL = 'https://nextlakelabs-backened.onrender.com/api/blog';
 
+    function showSkeletonLoading() {
+        if (!blogGrid) return;
+        let skeletonHtml = '';
+        for (let i = 0; i < 3; i++) {
+            skeletonHtml += `
+                <div class="blog-skeleton">
+                    <div class="skeleton-image"></div>
+                    <div class="skeleton-content">
+                        <div class="skeleton-line short"></div>
+                        <div class="skeleton-line title"></div>
+                        <div class="skeleton-line medium"></div>
+                        <div class="skeleton-line short"></div>
+                    </div>
+                </div>`;
+        }
+        blogGrid.innerHTML = skeletonHtml;
+    }
+
+    function getCachedBlogs() {
+        try {
+            const cached = localStorage.getItem('nll_blogs_cache');
+            if (!cached) return null;
+            const parsed = JSON.parse(cached);
+            // Cache valid for 5 minutes
+            if (Date.now() - parsed.timestamp > 5 * 60 * 1000) return null;
+            return parsed.data;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function setCachedBlogs(blogs) {
+        try {
+            localStorage.setItem('nll_blogs_cache', JSON.stringify({
+                data: blogs,
+                timestamp: Date.now()
+            }));
+        } catch (e) {
+            // localStorage unavailable or full — ignore
+        }
+    }
+
     async function fetchBlogs() {
         if (!blogGrid) return;
 
+        // Show cached data immediately if available
+        const cached = getCachedBlogs();
+        if (cached && cached.length > 0) {
+            renderBlogs(cached);
+        } else {
+            showSkeletonLoading();
+        }
+
+        // Show a "server waking up" message if API is slow (Render free-tier cold start)
+        let warmupTimeout;
+        if (!cached || cached.length === 0) {
+            warmupTimeout = setTimeout(() => {
+                const warmupEl = document.createElement('div');
+                warmupEl.id = 'blogWarmup';
+                warmupEl.style.cssText = 'grid-column: 1 / -1; text-align: center; padding: 1rem 0; color: #64748b; font-size: 0.95rem;';
+                warmupEl.textContent = 'Our server is waking up — this may take a moment on first visit...';
+                blogGrid.appendChild(warmupEl);
+            }, 5000);
+        }
+
         try {
-            const response = await fetch(`${API_BASE_URL}/viewblog`);
+            const controller = new AbortController();
+            const apiTimeout = setTimeout(() => controller.abort(), 60000);
+
+            const response = await fetch(`${API_BASE_URL}/viewblog`, { signal: controller.signal });
+            clearTimeout(apiTimeout);
+            clearTimeout(warmupTimeout);
+
             if (!response.ok) throw new Error('Failed to fetch blogs');
             
             const blogs = await response.json();
             
             if (blogs && blogs.length > 0) {
+                setCachedBlogs(blogs);
                 renderBlogs(blogs);
-            } else {
+            } else if (!cached || cached.length === 0) {
                 showComingSoon();
             }
         } catch (error) {
+            clearTimeout(warmupTimeout);
             console.error('Error fetching blogs:', error);
-            showComingSoon();
+            if (!cached || cached.length === 0) {
+                showComingSoon();
+            }
         }
     }
 
