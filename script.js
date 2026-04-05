@@ -138,6 +138,27 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Silent prefetch — runs on ANY page to warm up the backend and cache blog data
+    async function prefetchBlogs() {
+        const cached = getCachedBlogs();
+        if (cached && cached.length > 0) return; // Already have fresh cache, skip
+
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 60000);
+            const response = await fetch(`${API_BASE_URL}/viewblog`, { signal: controller.signal });
+            clearTimeout(timeout);
+            if (!response.ok) return;
+            const blogs = await response.json();
+            if (blogs && blogs.length > 0) {
+                setCachedBlogs(blogs);
+            }
+        } catch (e) {
+            // Silent fail — this is just a background prefetch
+        }
+    }
+
+    // Blog page: render blogs from cache or fetch
     async function fetchBlogs() {
         if (!blogGrid) return;
 
@@ -145,21 +166,22 @@ document.addEventListener('DOMContentLoaded', function() {
         const cached = getCachedBlogs();
         if (cached && cached.length > 0) {
             renderBlogs(cached);
-        } else {
-            showSkeletonLoading();
+            // Still refresh in background
+            prefetchBlogsAndRefresh();
+            return;
         }
 
-        // Show a "server waking up" message if API is slow (Render free-tier cold start)
-        let warmupTimeout;
-        if (!cached || cached.length === 0) {
-            warmupTimeout = setTimeout(() => {
-                const warmupEl = document.createElement('div');
-                warmupEl.id = 'blogWarmup';
-                warmupEl.style.cssText = 'grid-column: 1 / -1; text-align: center; padding: 1rem 0; color: #64748b; font-size: 0.95rem;';
-                warmupEl.textContent = 'Our server is waking up — this may take a moment on first visit...';
-                blogGrid.appendChild(warmupEl);
-            }, 5000);
-        }
+        // No cache — show skeleton and fetch
+        showSkeletonLoading();
+
+        // Show a "server waking up" message if API is slow
+        const warmupTimeout = setTimeout(() => {
+            const warmupEl = document.createElement('div');
+            warmupEl.id = 'blogWarmup';
+            warmupEl.style.cssText = 'grid-column: 1 / -1; text-align: center; padding: 1rem 0; color: #64748b; font-size: 0.95rem;';
+            warmupEl.textContent = 'Our server is waking up — this may take a moment on first visit...';
+            blogGrid.appendChild(warmupEl);
+        }, 5000);
 
         try {
             const controller = new AbortController();
@@ -176,16 +198,42 @@ document.addEventListener('DOMContentLoaded', function() {
             if (blogs && blogs.length > 0) {
                 setCachedBlogs(blogs);
                 renderBlogs(blogs);
-            } else if (!cached || cached.length === 0) {
+            } else {
                 showComingSoon();
             }
         } catch (error) {
             clearTimeout(warmupTimeout);
             console.error('Error fetching blogs:', error);
-            if (!cached || cached.length === 0) {
-                showComingSoon();
-            }
+            showComingSoon();
         }
+    }
+
+    // Background refresh when blog page has cached data
+    async function prefetchBlogsAndRefresh() {
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 60000);
+            const response = await fetch(`${API_BASE_URL}/viewblog`, { signal: controller.signal });
+            clearTimeout(timeout);
+            if (!response.ok) return;
+            const blogs = await response.json();
+            if (blogs && blogs.length > 0) {
+                setCachedBlogs(blogs);
+                renderBlogs(blogs);
+            }
+        } catch (e) {
+            // Silent — cached version is already showing
+        }
+    }
+
+    // Prefetch on every page (homepage, about, etc.) to warm the backend
+    if (!blogGrid) {
+        prefetchBlogs();
+    }
+
+    // On blog page, render immediately
+    if (blogGrid) {
+        fetchBlogs();
     }
 
     function renderBlogs(blogs) {
@@ -239,11 +287,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!text) return '';
         if (text.length <= length) return text;
         return text.substring(0, length).trim() + '...';
-    }
-
-    // Initialize blog fetch
-    if (blogGrid) {
-        fetchBlogs();
     }
 
     // Single Blog Post Logic
